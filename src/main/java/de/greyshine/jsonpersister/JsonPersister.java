@@ -6,7 +6,9 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -16,6 +18,8 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 
 import de.greyshine.jsonpersister.annotations.Id;
+import de.greyshine.jsonpersister.annotations.Version;
+import de.greyshine.jsonpersister.exceptions.BadVersionException;
 import de.greyshine.jsonpersister.util.Assert;
 import de.greyshine.jsonpersister.util.Utils;
 import de.greyshine.jsonpersister.util.Utils.Wrapper;
@@ -26,6 +30,16 @@ public class JsonPersister {
 	
 	private final Storage storage = new Storage();
 	private final Gson gson = new GsonBuilder().setPrettyPrinting().serializeNulls().create();
+	
+	private IIdProvider idProvider = new IIdProvider() {
+		@Override
+		public String getId(Object inObject) {
+			return UUID.randomUUID().toString();
+		}
+	};
+	
+	private final Map<Class<?>,Field> idFields = new HashMap<>(0);
+	private final Map<Class<?>,Field> versionFields = new HashMap<>(0);
 	
 	public JsonPersister( File inPath ) {
 		
@@ -39,6 +53,92 @@ public class JsonPersister {
 		
 		baseDir = Utils.getCanonicalFile( inPath );
 	}
+	
+	public void setIdProvider(IIdProvider idProvider) {
+
+		if ( idProvider == null ) { throw new IllegalArgumentException( IIdProvider.class.getTypeName() +" must not be null" ); } 
+		this.idProvider = idProvider;
+	}
+	
+	/**
+	 * Reads an Object from the file System
+	 * 
+	 * @param inClass
+	 * @param inId
+	 * @return
+	 * @throws IOException
+	 */
+	public <T> T read(Class<T> inClass, String inId) throws IOException {
+		
+		if ( inClass == null || inId == null ) { return null; }
+		
+		final File file = getFile( inClass, inId );
+		
+		synchronized ( file.getCanonicalPath().intern() ) {
+		
+			if ( !file.isFile() ) { return null; }
+			
+			try (FileReader reader = new FileReader(file)) {
+				return gson.fromJson(reader, inClass);	
+			}	
+		}
+	}
+	
+	public <T> String upsert(T inObject) throws IOException {
+		
+		if ( inObject == null ) { throw new IllegalArgumentException("No object specified."); }
+		
+		final Field idField = getIdField( inObject.getClass() );
+		
+		String id = Utils.getFieldValue( idField, inObject );
+		
+		if ( Utils.isBlank( id ) ) {
+			
+			id = idProvider.getId( inObject );
+			
+			if ( id == null ) { throw new IllegalStateException("Id for object is null [object="+ inObject +"]"); }
+			
+			Utils.setFieldValue(idField, inObject, id);
+		} 
+		
+		final File file = getFile(inObject.getClass(), id);
+		final String jsonString = gson.toJson( inObject );
+		
+		synchronized ( file.getCanonicalPath().intern() ) {
+			Utils.writeFile( file, jsonString, Utils.CHARSET_UTF8);		
+		}
+		
+		return id;
+	}
+	
+	public boolean delete(Object inObject) throws IOException {
+		
+		if ( inObject == null ) { return false; }
+		
+		final Field idField = getIdField( inObject.getClass() );
+		
+		final String id = Utils.getFieldValue(idField, inObject);
+		
+		if ( id == null ) { return false; }
+		
+		return delete( inObject.getClass(), id );
+	}
+	
+	public boolean delete(Class<?> inClass, String inId) throws IOException {
+		
+		if ( inClass == null || inId == null ) { return true; }
+		
+		final File file = getFile(inClass, inId);
+		
+		if ( !file.exists() ) { return false; }
+		
+		synchronized ( file.getCanonicalPath().intern() ) {
+			file.delete();
+		}
+		
+		return !file.exists();
+	}
+	
 	
 	public Storage getStorage() {
 		return storage;
@@ -76,31 +176,54 @@ public class JsonPersister {
 		return getFile(inClass, inId).exists();
 	}
 
-	public String insert(Object inObject) throws IOException {
-		return upsert( null, inObject );
-	}
-	
-	public <T> T read(Class<T> inClass, String inId) throws IOException {
+	private String objectToJson(Object inObject, String inId) throws IOException {
 		
-		if ( inClass == null || inId == null ) { return null; }
-		
-		final File file = getFile( inClass, inId );
-		
-		synchronized ( file.getCanonicalPath().intern() ) {
-		
-			if ( !file.isFile() ) { return null; }
-			
-			try (FileReader reader = new FileReader(file)) {
-				return gson.fromJson( reader, inClass);	
-			}	
-		}
-	}
-	
-	private <T> Field getIdField(T inObject) {
-		
-		final Utils.Wrapper<Field> field = new Utils.Wrapper<>(null);
+		final Utils.Wrapper<Field> fieldWrapper = new Wrapper<>(null);
 		
 		Stream.of( inObject.getClass().getDeclaredFields() )
+			.filter( (field)->field.getAnnotation( Version.class ) != null )
+			.forEach( (field)->{
+				if ( fieldWrapper.isNotNull() ) {
+					throw new IllegalStateException("Only one field can hold @Version"  );
+				} else if ( !Modifier.isPrivate( field.getModifiers() ) ) {
+					throw new IllegalStateException("@Version must be private"  );
+				} else if ( Modifier.isStatic( field.getModifiers() ) ) {
+					throw new IllegalStateException("@Version must not be static"  );
+				} else if ( long.class != field.getType() ) {
+					throw new IllegalStateException("@Version field must be long"  );
+				}
+				fieldWrapper.value = field;
+			} );
+		
+		if ( fieldWrapper.isNotNull() ) {
+			
+			final long newObjectVersion = Utils.getFieldValue( fieldWrapper.value, inObject ); 
+			final Object oldObject = read( inObject.getClass(), inId);
+			final long oldObjectVersion = Utils.getFieldValue( fieldWrapper.value, oldObject );
+			
+			if ( newObjectVersion != oldObjectVersion ) {
+				throw new BadVersionException(inObject, oldObjectVersion);
+			}
+			
+		}
+		
+		
+		String json = gson.toJson( inObject );
+		
+		return json;
+	}
+	
+
+	
+	private <T> Field getIdField(Class<?> inClass) {
+		
+		final Field idField = idFields.get( inClass ); 
+
+		if ( idField != null ) { return idField; }
+		
+		final Utils.Wrapper<Field> fieldWrapper = new Utils.Wrapper<>(null);
+
+		Stream.of( inClass.getDeclaredFields() )
 			.filter( (f)->f.getDeclaredAnnotation( Id.class ) != null )
 			.filter( (f)->{
 				if ( f.getType() != String.class ) {
@@ -115,81 +238,57 @@ public class JsonPersister {
 				return true;
 			} )
 			.forEach( (f)->{
-				if ( field.value != null ) {
+				if ( fieldWrapper.value != null ) {
 					throw new IllegalStateException("Only one @Id field allowed");
 				}
-				field.value = f;
+				fieldWrapper.value = f;
 			} );
 		
-		return field.value;
+		if ( fieldWrapper.isNull() ) {
+			throw new IllegalArgumentException( inClass.getTypeName() +" does not declare an @Id-String field" );
+		}
+		
+		idFields.put(inClass , fieldWrapper.value);
+		return fieldWrapper.value;
 	}
 	
-	private <T> String getAnnotatedId(T inObject) {
+	private <T> Field getVersionField(Class<T> inClass) {
 		
-		final Field idField = getIdField(inObject);
-		
-		if ( idField == null ) {
-			// no @Id found
-			return null;
-		} 
-		
-		String theId;
-		try {
-			theId = (String) idField.get( inObject );
-		} catch (IllegalArgumentException | IllegalAccessException e) {
-			throw new IllegalStateException( "Unable to access @Id" , e );
+		if ( versionFields.containsKey( inClass ) ) {
+			return versionFields.get( inClass );
 		}
 		
-		return theId;
+		final Utils.Wrapper<Field> fieldWrapper = new Utils.Wrapper<>(null);
+		
+		Stream.of( inClass.getDeclaredFields() )
+			.filter( (f)->f.getDeclaredAnnotation( Version.class ) != null )
+			.filter( (f)->{
+				if ( f.getType() != long.class ) {
+					throw new IllegalStateException("@Version field must be a long");
+				}
+				if ( Modifier.isStatic( f.getModifiers() ) ) {
+					throw new IllegalStateException("@Version field must not be static");
+				}
+				if ( Modifier.isFinal( f.getModifiers() ) ) {
+					throw new IllegalStateException("@Version field must not be final");
+				}
+				if ( !Modifier.isPrivate( f.getModifiers() ) ) {
+					throw new IllegalStateException("@Version field must be private");
+				}
+				return true;
+			} )
+			.forEach( (f)->{
+				if ( fieldWrapper.value != null ) {
+					throw new IllegalStateException("Only one @Version field allowed");
+				}
+				fieldWrapper.value = f;
+			} );
+		
+		versionFields.put(inClass, fieldWrapper.value);
+		
+		return fieldWrapper.value;
 	}
 	
-	private <T> void setAnnotatedId(T inObject, String inId) {
-		
-		final Field idField = getIdField(inObject);
-		if ( idField == null ) { return; }
-		try {
-			idField.set(inObject, inId);
-		} catch (IllegalArgumentException | IllegalAccessException e) {
-			throw new IllegalStateException( "Unable to access @Id" , e );
-		}
-	}
-	
-	public <T> String upsert(String inId, T inObject) throws IOException {
-		
-		if ( inObject == null ) { throw new IllegalArgumentException("No object specified."); }
-		
-		if ( Utils.isNotBlank( inId ) ) {
-			setAnnotatedId( inObject, inId );
-		} else {
-			inId = getAnnotatedId( inObject );
-		}
-		
-		inId = inId != null ? inId : UUID.randomUUID().toString();
-		setAnnotatedId(inObject, inId);
-		
-		final File file = getFile(inObject.getClass(), inId);
-		final String jsonString = gson.toJson( inObject );
-		
-		synchronized ( file.getCanonicalPath().intern() ) {
-			Utils.writeFile( file, jsonString, Utils.CHARSET_UTF8);		
-		}
-		
-		return inId;
-	}
-	
-	public boolean delete(Class<?> inClass, String inId) throws IOException {
-		
-		if ( inClass == null || inId == null ) { return true; }
-		
-		final File file = getFile(inClass, inId);
-		
-		synchronized ( file.getCanonicalPath().intern() ) {
-			file.delete();
-		}
-		
-		return !file.exists();
-	}
-
 	public class Storage {
 		
 		public File getBaseDir() { return baseDir; }
@@ -281,5 +380,9 @@ public class JsonPersister {
 		if ( exceptionWrapper.value != null ) {
 			throw Utils.toRuntimeException(exceptionWrapper.value);
 		}
+	}
+	
+	private interface IIdProvider {
+		String getId(Object inObject);
 	}
 }

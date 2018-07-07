@@ -9,6 +9,13 @@ public class IdObject {
 	
 	public long time = System.currentTimeMillis();
 
+	public IdObject() {
+	}
+	
+	public IdObject(String id) {
+		this.id=id;
+	}
+	
 	public String toString() {
 		return "IdObject [id="+id+", time="+ time +"]";
 	}

@@ -9,6 +9,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
 import java.io.UnsupportedEncodingException;
+import java.lang.reflect.Field;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -317,6 +318,8 @@ public class Utils {
 		public Wrapper(T inValue) {
 			this.value = inValue;
 		}
+		public boolean isNull() { return value == null; }
+		public boolean isNotNull() { return value != null; }
 	}
 
 	public static RuntimeException toRuntimeException(Exception inException) {
@@ -326,6 +329,24 @@ public class Utils {
 		}
 		
 		return new RuntimeException( inException );
+	}
+
+	public static <T> T getFieldValue(Field inField, Object inObject) {
+		inField.setAccessible( true );
+		try {
+			return (T)inField.get( inObject );
+		} catch (IllegalArgumentException | IllegalAccessException e) {
+			throw new RuntimeException( e );
+		}
+	}
+	
+	public static <T> void setFieldValue(Field inField, Object inObject, Object inValue) {
+		inField.setAccessible( true );
+		try {
+			inField.set( inObject, inValue );
+		} catch (IllegalArgumentException | IllegalAccessException e) {
+			throw new RuntimeException( e );
+		}
 	}
 	
 	

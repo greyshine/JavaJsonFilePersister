@@ -35,12 +35,11 @@ public class CrudTester {
 	@Test	
 	public void createReadUpdateDelete() throws IOException {
 		
-		final SimpleObject createSimpleObject = new SimpleObject();
-		createSimpleObject.id = System.currentTimeMillis();
+		final SimpleObject createSimpleObject = new SimpleObject( System.currentTimeMillis() );
 		createSimpleObject.text = "Hallo";
 		createSimpleObject.text2 = null;
 		
-		final String id = jp.insert( createSimpleObject );
+		final String id = jp.upsert( createSimpleObject );
 		Assert.assertNotNull( id );
 		jp.isExisting( SimpleObject.class, id );
 		
@@ -48,7 +47,7 @@ public class CrudTester {
 		Assert.assertEquals( createSimpleObject.id , readSimpleObject.id);
 		
 		readSimpleObject.text = "Hallo2";
-		jp.upsert( id, readSimpleObject );
+		jp.upsert( readSimpleObject );
 		final SimpleObject readSimpleObject2 = jp.read( SimpleObject.class, id );
 		Assert.assertEquals( readSimpleObject.id , readSimpleObject2.id);
 		Assert.assertEquals( "Hallo2" , readSimpleObject2.text);
@@ -63,14 +62,14 @@ public class CrudTester {
 		
 		final IdObject createIdObject = new IdObject();
 		
-		String id = jp.insert( createIdObject );
+		String id = jp.upsert( createIdObject );
 		System.out.println( "ID: "+ id );
 		System.out.println( createIdObject );
 		
 		final IdObject createIdObject2 = new IdObject();
 		createIdObject2.id = "4711";
 		
-		id = jp.insert( createIdObject2 );
+		id = jp.upsert( createIdObject2 );
 		System.out.println( createIdObject2 );
 		
 		Assert.assertEquals( "4711" , id);
@@ -79,11 +78,11 @@ public class CrudTester {
 	@Test
 	public void testTravers() throws IOException {
 		
-		jp.insert( new IdObject().id("1") );
-		jp.insert( new IdObject().id("2") );
-		jp.insert( new IdObject().id("3") );
-		jp.insert( new IdObject().id("4") );
-		jp.insert( new IdObject().id("5") );
+		jp.upsert( new IdObject("1") );
+		jp.upsert( new IdObject("2") );
+		jp.upsert( new IdObject("3") );
+		jp.upsert( new IdObject("4") );
+		jp.upsert( new IdObject("5") );
 		
 		final Set<String> ids = new HashSet<>();
 		ids.add( "1" );
