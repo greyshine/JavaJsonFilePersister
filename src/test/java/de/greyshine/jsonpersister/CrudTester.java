@@ -31,6 +31,16 @@ public class CrudTester {
 		Assert.assertTrue( storage.isDirectory() );
 	}
 	
+	@Test
+	public void saveWithouId() throws IOException {
+		try {
+			jp.upsert( new Object() );
+		} catch (Exception e) {
+			Assert.assertEquals( IllegalArgumentException.class, e.getClass());
+			Assert.assertTrue( e.getMessage().endsWith( " does not declare an @Id-String field" ) );
+		}
+	}
+	
 	
 	@Test	
 	public void createReadUpdateDelete() throws IOException {
