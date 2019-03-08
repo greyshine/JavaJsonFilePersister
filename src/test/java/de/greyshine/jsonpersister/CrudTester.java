@@ -10,37 +10,38 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import de.greyshine.jsonpersister.objects.IdObject;
 import de.greyshine.jsonpersister.objects.SimpleObject;
 import de.greyshine.jsonpersister.util.Utils;
 
 public class CrudTester {
 	
-	private static final File storage = new File( "target/storage" );
+	private static final File STORAGE = new File( "target/storage" );
 	
-	final JsonPersister jp = new JsonPersister( storage );
+	final JsonPersister jp = new JsonPersister( STORAGE );
 	
 	@BeforeClass
 	public static void beforeClass() {
 		
-		if ( storage.exists() ) {
-			Utils.delete( storage );
+		if ( STORAGE.exists() ) {
+			Utils.delete( STORAGE );
 		} 
 		
-		storage.mkdirs();
+		STORAGE.mkdirs();
 		
-		Assert.assertTrue( storage.isDirectory() );
+		Assert.assertTrue( STORAGE.isDirectory() );
 	}
 	
 	@Test
 	public void saveWithouId() throws IOException {
 		try {
 			jp.upsert( new Object() );
+			Assert.fail("must not be here");
 		} catch (Exception e) {
 			Assert.assertEquals( IllegalArgumentException.class, e.getClass());
 			Assert.assertTrue( e.getMessage().endsWith( " does not declare an @Id-String field" ) );
 		}
 	}
-	
 	
 	@Test	
 	public void createReadUpdateDelete() throws IOException {
@@ -113,5 +114,8 @@ public class CrudTester {
 		idObjects.forEach( (idObject)->ids.remove(idObject.id) );
 		Assert.assertTrue( ids.isEmpty() );
 	}
+	
+	
+	
 
 }

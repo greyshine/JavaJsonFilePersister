@@ -1,4 +1,4 @@
-package de.greyshine.jsonpersister;
+package de.greyshine.jsonpersister.objects;
 
 import de.greyshine.jsonpersister.annotations.Id;
 
