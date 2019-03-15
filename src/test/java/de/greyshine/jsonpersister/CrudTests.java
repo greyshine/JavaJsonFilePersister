@@ -14,9 +14,9 @@ import de.greyshine.jsonpersister.objects.IdObject;
 import de.greyshine.jsonpersister.objects.SimpleObject;
 import de.greyshine.jsonpersister.util.Utils;
 
-public class CrudTester {
+public class CrudTests {
 	
-	private static final File STORAGE = new File( "target/storage" );
+	private static final File STORAGE = new File( "target/test/storage/"+CrudTests.class.getSimpleName() );
 	
 	final JsonPersister jp = new JsonPersister( STORAGE );
 	
@@ -27,6 +27,8 @@ public class CrudTester {
 			Utils.delete( STORAGE );
 		} 
 		
+		Assert.assertFalse( STORAGE.exists() );
+		Assert.assertFalse( STORAGE.isDirectory() );
 		STORAGE.mkdirs();
 		
 		Assert.assertTrue( STORAGE.isDirectory() );

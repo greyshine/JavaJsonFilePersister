@@ -3,6 +3,8 @@ package de.greyshine.jsonpersister;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
@@ -10,6 +12,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Stream;
@@ -31,6 +35,11 @@ public class JsonPersister {
 
 	private final File baseDir;
 
+	private final BackupHandler backupHandler = new BackupHandler(this);
+	
+	private AtomicBoolean block =  new AtomicBoolean(false);
+	private AtomicInteger concurrentAccesses = new AtomicInteger(0);
+	
 	private final Storage storage = new Storage();
 	private final Gson gson = new GsonBuilder().setPrettyPrinting().serializeNulls().create();
 
@@ -43,19 +52,23 @@ public class JsonPersister {
 
 	private final Map<Class<?>, Field> idFields = new HashMap<>(0);
 
-	public JsonPersister(File inPath) {
+	public JsonPersister(File path) {
 
-		Assert.notNull("No base directory", inPath);
+		Assert.notNull("No base directory", path);
 
-		if (!inPath.exists()) {
-			inPath.mkdirs();
+		if (!path.exists()) {
+			path.mkdirs();
 		}
 
-		Assert.isDirectory(inPath);
+		Assert.isDirectory(path);
 
-		baseDir = Utils.getCanonicalFile(inPath);
+		baseDir = Utils.getCanonicalFile(path);
 
 		LOG.info("storage: {}", baseDir.getAbsolutePath());
+	}
+	
+	public File getBaseDir() {
+		return baseDir;
 	}
 
 	public void setIdProvider(IIdProvider idProvider) {
@@ -81,20 +94,28 @@ public class JsonPersister {
 
 		final File file = getFile(clazz, id);
 
-		synchronized (file.getCanonicalPath().intern()) {
+		concurrentAccesses.incrementAndGet();
+		
+		try {
+			
+			synchronized (file.getCanonicalPath().intern()) {
 
-			if (file == null || !file.isFile()) {
-				return null;
+				if (file == null || !file.isFile()) {
+					return null;
+				}
+
+				try (FileReader reader = new FileReader(file)) {
+
+					final T result = gson.fromJson(reader, clazz);
+
+					LOG.info("read [id={}]:\n{}", id, result);
+
+					return result;
+				}
 			}
-
-			try (FileReader reader = new FileReader(file)) {
-
-				final T result = gson.fromJson(reader, clazz);
-
-				LOG.info("read [id={}]:\n{}", id, result);
-
-				return result;
-			}
+			
+		} finally {
+			concurrentAccesses.decrementAndGet();
 		}
 	}
 
@@ -123,9 +144,19 @@ public class JsonPersister {
 		final String jsonString = gson.toJson(object);
 
 		LOG.info("upsert [object={}]:\n{}", object, jsonString);
-
-		synchronized (file.getCanonicalPath().intern()) {
-			Utils.writeFile(file, jsonString, Utils.CHARSET_UTF8);
+		
+		Utils.wait( block, ()->block.get(), ()->concurrentAccesses.incrementAndGet());
+		
+		try {
+		
+			synchronized (file.getCanonicalPath().intern()) {
+				Utils.writeFile(file, jsonString, Utils.CHARSET_UTF8);
+			}
+			
+		} finally {
+			
+			concurrentAccesses.decrementAndGet();
+			Utils.notify(block);
 		}
 
 		return id;
@@ -159,9 +190,18 @@ public class JsonPersister {
 		if (!file.exists()) {
 			return false;
 		}
-
-		synchronized (file.getCanonicalPath().intern()) {
-			file.delete();
+		
+		Utils.wait( block, ()->block.get(), ()->concurrentAccesses.incrementAndGet());
+		
+		try {
+			
+			synchronized (file.getCanonicalPath().intern()) {
+				file.delete();
+			}			
+			
+		} finally {
+			concurrentAccesses.decrementAndGet();
+			Utils.notify( block );
 		}
 
 		return !file.exists();
@@ -175,13 +215,13 @@ public class JsonPersister {
 		return new File(baseDir, inClass.getTypeName());
 	}
 
-	private File getDir(Class<?> inClass, String inId) {
+	private File getDir(Class<?> inClass, String id) {
 
-		if (inClass == null || inId == null) {
+		if (inClass == null || Utils.isBlank(id)) {
 			return null;
 		}
 
-		final String pathExtension = Utils.getHash(inId, 5, "0123456789abcdefghijklmnopqrstuvwxyz");
+		final String pathExtension = Utils.getHash(id.trim(), 5, "0123456789abcdefghijklmnopqrstuvwxyz");
 
 		return new File(getDir(inClass), pathExtension);
 	}
@@ -191,7 +231,7 @@ public class JsonPersister {
 		if (clazz == null || id == null) {
 			return null;
 		}
-
+		
 		return new File(getDir(clazz, id), id + ".json");
 	}
 
@@ -242,39 +282,12 @@ public class JsonPersister {
 		return fieldWrapper.value;
 	}
 
-	public class Storage {
-
-		public File getBaseDir() {
-			return baseDir;
-		}
-
-		/**
-		 * @param inType
-		 * @param inHandler
-		 *            return value determines whether to keep on traversing
-		 */
-		public <T> void traversObjects(Class<T> clazz, Consumer<File> fileConsumer) {
-
-			if (clazz == null || fileConsumer == null) {
-				return;
-			}
-
-			Stream.of(getDir(clazz).listFiles()).filter((f1) -> f1.isDirectory()).forEach((f1) -> {
-				Stream.of(f1.listFiles()).filter((f2) -> f2.isFile() && f2.getName().toLowerCase().endsWith(".json"))
-						.forEach((f2) -> fileConsumer.accept(f2));
-			});
-		}
-	}
-
-	public <T> List<T> getList(Class<T> clazz, Function<T, Boolean> function) {
+	public <T> List<T> getList(Class<T> clazz, Function<T, Boolean> addDecision) {
 
 		if (clazz == null) {
 			return null;
 		}
-		if (function == null) {
-			return new ArrayList<>(0);
-		}
-
+		
 		final List<T> list = new ArrayList<>();
 
 		list(clazz, (T) -> {
@@ -282,7 +295,7 @@ public class JsonPersister {
 			final Boolean r;
 
 			try {
-				r = function.apply(T);
+				r = addDecision == null || addDecision.apply(T);
 			} catch (Exception e) {
 				throw Utils.toRuntimeException(e);
 			}
@@ -297,19 +310,16 @@ public class JsonPersister {
 		return list;
 	}
 
-	public <T> void list(Class<T> clazz, Function<T, Boolean> function) {
+	public <T> void list(Class<T> clazz, Function<T, Boolean> addItemDecision) {
 
 		if (clazz == null) {
 			return;
 		}
-		if (function == null) {
-			return;
-		}
-
+		
 		final List<T> results = new ArrayList<>();
 		final Wrapper<Boolean> quitFlag = new Wrapper<>(null);
 		final Wrapper<Exception> exceptionWrapper = new Wrapper<>(null);
-
+		
 		this.storage.traversObjects(clazz, (file) -> {
 
 			if (Boolean.TRUE.equals(quitFlag.value) || exceptionWrapper.value != null) {
@@ -325,13 +335,19 @@ public class JsonPersister {
 			try {
 
 				final T object = read(clazz, id);
-				final Boolean r = function.apply(object);
-
-				if (r == null) {
-					quitFlag.value = true;
-					return;
+				
+				Boolean r = true;
+				
+				if ( addItemDecision != null ) {
+					
+					r = addItemDecision.apply(object); 
+					
+					if (r == null) {
+						quitFlag.value = true;
+						return;
+					}
 				}
-
+				
 				if (Boolean.TRUE.equals(r)) {
 					results.add(object);
 				}
@@ -351,4 +367,50 @@ public class JsonPersister {
 	private interface IIdProvider {
 		String getId(Object inObject);
 	}
+
+	public void writeBackup(OutputStream out) throws IOException {
+		
+		Utils.wait( block, ()->block.get(), ()->block.set(true) );
+		backupHandler.writeBackup(out);
+		Utils.notify( block, ()->block.set(false) );
+	}
+	
+	public void readBackup(InputStream in, boolean additive) throws IOException {
+		
+		Utils.wait( block, ()->block.get(), ()->block.set(true) );
+		backupHandler.readBackup(in, additive);
+		Utils.notify( block, ()->block.set(false) );
+	}
+
+	public class Storage {
+		
+		public static final String VERSION = "1.0";
+		
+		public File getBaseDir() {
+			return baseDir;
+		}
+
+		/**
+		 * @param inType
+		 * @param inHandler
+		 *            return value determines whether to keep on traversing
+		 */
+		public <T> void traversObjects(Class<T> clazz, Consumer<File> fileConsumer) {
+
+			if (clazz == null || fileConsumer == null) {
+				return;
+			}
+
+			Stream.of( getDir(clazz).listFiles() )
+				.filter(  (f1) -> f1.isDirectory())
+				.forEach( (f1) -> {
+									Stream.of( f1.listFiles())
+										.filter((f2) -> f2.isFile() && f2.getName().toLowerCase().endsWith(".json"))
+										.forEach((f2) -> fileConsumer.accept(f2));
+								  }
+				);
+		}
+	}
+
+	
 }
