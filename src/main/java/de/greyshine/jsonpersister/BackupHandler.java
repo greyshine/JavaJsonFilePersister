@@ -12,6 +12,8 @@ import java.math.BigInteger;
 import java.security.MessageDigest;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,9 +42,8 @@ public class BackupHandler {
 			// https://stackoverflow.com/a/3103722
 			final MessageDigest md = MessageDigest.getInstance("SHA-256");
 			
-			//final GZIPOutputStream gzipOut = new GZIPOutputStream( out );
-			//final DataOutputStream dos = new DataOutputStream( gzipOut );
-			final DataOutputStream dos = new DataOutputStream( out );
+			final GZIPOutputStream gzipOut = new GZIPOutputStream( out );
+			final DataOutputStream dos = new DataOutputStream( gzipOut );
 			
 			dos.writeUTF("v:"+Storage.VERSION+"\n");
 			
@@ -72,8 +73,9 @@ public class BackupHandler {
 			LOG.debug( "checksum: {}", checksum );
 			dos.writeUTF("$:"+checksum );
 			
-			//gzipOut.finish();
 			dos.flush();
+			gzipOut.finish();
+			gzipOut.flush();
 			
 			itemCounts.forEach( (k,v)->LOG.debug( "item count '{}': {}", k, v ) );
 			
@@ -100,7 +102,7 @@ public class BackupHandler {
 			// https://stackoverflow.com/a/3103722
 			final MessageDigest md = MessageDigest.getInstance("SHA-256");
 			
-			final DataInputStream dis = new DataInputStream( in );	
+			final DataInputStream dis = new DataInputStream( new GZIPInputStream( in ) );	
 			
 			String version = dis.readUTF().trim();
 			if ( !version.startsWith( "v:" ) ) { throw new IOException("Expected version string 'v:<version>'"); }
@@ -109,7 +111,7 @@ public class BackupHandler {
 			
 			String checksum = null;
 			String fileLine = null;
-			while( in.available() > 0 ) {
+			while( dis.available() > 0 ) {
 				
 				fileLine = dis.readUTF();
 				LOG.debug( "line: {}", fileLine );
@@ -129,7 +131,7 @@ public class BackupHandler {
 					}
 					
 					final FileOutputStream fos = new FileOutputStream( fileToSafe );
-					Utils.copy(in, fos, sizeToRead, md);
+					Utils.copy(dis, fos, sizeToRead, md);
 					Utils.closeSafe( fos );
 					
 					itemCounts.putIfAbsent( clazz.getTypeName(), 0);

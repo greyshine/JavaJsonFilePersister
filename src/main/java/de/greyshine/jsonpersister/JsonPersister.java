@@ -402,12 +402,10 @@ public class JsonPersister {
 			}
 
 			Stream.of( getDir(clazz).listFiles() )
-				.filter(  (f1) -> f1.isDirectory())
-				.forEach( (f1) -> {
-									Stream.of( f1.listFiles())
-										.filter((f2) -> f2.isFile() && f2.getName().toLowerCase().endsWith(".json"))
-										.forEach((f2) -> fileConsumer.accept(f2));
-								  }
+				.filter(  (file) -> file.isDirectory() )
+				.forEach( (file) -> Stream.of( file.listFiles())
+								  	.filter(  (f) -> f.isFile() && f.getName().toLowerCase().endsWith(".json") )
+									.forEach( (f) -> fileConsumer.accept(f) )
 				);
 		}
 	}
