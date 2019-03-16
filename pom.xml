@@ -4,7 +4,7 @@
   
   <groupId>de.greyshine</groupId>
   <artifactId>json-persister</artifactId>
-  <version>1.1beta</version>
+  <version>1.2</version>
   
   <dependencies>
   

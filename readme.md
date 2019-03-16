@@ -18,7 +18,7 @@ use in your _pom.xml_ like this:
 		    <dependency>
 			    <groupId>de.greyshine</groupId>
 			    <artifactId>json-persister</artifactId>
-			    <version>1.0</version>
+			    <version>1.2</version>
 		    </dependency>
 	   </dependencies>
    
