@@ -33,10 +33,11 @@ public class CrossReferenceTests {
 	@Test
 	public void test() throws IOException {
 	
-		// TODO idea is to build references, but i am missing the use case so far
+		// TODO idea is to build references, but I am missing the use case so far
 		// one idea is to have an entity A reference entity B as well as entity c references entity B 
 		
-		CrossReferenceRoot crr = new CrossReferenceRoot();
+		final CrossReferenceRoot crr = new CrossReferenceRoot();
+		crr.singleElement = new CcListElement();
 		crr.ccListElementsList.add( new CcListElement() );
 		crr.ccListElementsArray[0] = new CcListElement();
 		crr.ccListElementsArray[2] = new CcListElement();
@@ -45,7 +46,6 @@ public class CrossReferenceTests {
 		crr.map2.put( new CcListElement(), "number2");
 		
 		jp.upsert( crr );
-		
 	}
 
 }

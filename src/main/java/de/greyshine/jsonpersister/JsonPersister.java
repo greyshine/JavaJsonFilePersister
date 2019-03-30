@@ -5,6 +5,7 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
@@ -25,6 +26,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 
 import de.greyshine.jsonpersister.annotations.Id;
+import de.greyshine.jsonpersister.objects.CrossReferenceRoot;
 import de.greyshine.jsonpersister.util.Assert;
 import de.greyshine.jsonpersister.util.Utils;
 import de.greyshine.jsonpersister.util.Utils.Wrapper;
@@ -141,8 +143,18 @@ public class JsonPersister {
 		}
 
 		final File file = getFile(object.getClass(), id);
-		final String jsonString = gson.toJson(object);
+		
+		final List<Object> objects = new ArrayList<>();
 
+		// idea for setting relative objects; see testcase CrossReferenceTests.java
+		//traversRelativeObjects( objects, object );
+		objects.add( object ); // workaround for not having 'traversRelativeObjects' implemented
+		
+		final List<String> jsonStrings = new ArrayList<>();
+		objects.forEach( (aObject)->jsonStrings.add( gson.toJson(object) ) );
+		
+		final String jsonString = jsonStrings.get(0);
+		
 		LOG.info("upsert [object={}]:\n{}", object, jsonString);
 		
 		Utils.wait( block, ()->block.get(), ()->concurrentAccesses.incrementAndGet());
@@ -160,6 +172,27 @@ public class JsonPersister {
 		}
 
 		return id;
+	}
+
+	private void traversRelativeObjects(List<Object> resultList, Object object) {
+		
+		if ( object == null ) { return; }
+		if ( resultList.contains( object ) ) { return; }
+		
+		final List<Field> oneFields = new ArrayList<>();
+		final List<Field> mapFields = new ArrayList<>();
+		
+		// standard 1:1 fields
+		Stream.of( object.getClass().getDeclaredFields() )
+			.filter( (field)->{
+				final int modifiers = field.getModifiers();
+				if ( Modifier.isStatic( modifiers ) ) { return false; }
+				return true;
+			} )
+			.forEach( field->{
+				field.setAccessible(true);
+			} );
+		
 	}
 
 	public boolean delete(Object object) throws IOException {
@@ -408,6 +441,17 @@ public class JsonPersister {
 									.forEach( (f) -> fileConsumer.accept(f) )
 				);
 		}
+	}
+
+	public void prettyPrint(Object object) throws IOException {
+		this.prettyPrint( System.out, object );
+	}
+	
+	public void prettyPrint(OutputStream out, Object object) throws IOException {
+		
+		final PrintStream ps = out == null ? System.out : out instanceof PrintStream ? (PrintStream)out : new PrintStream( out );
+		ps.write( gson.toJson( object ).getBytes( Utils.CHARSET_UTF8 ) );
+		ps.flush();
 	}
 
 	

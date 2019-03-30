@@ -12,6 +12,8 @@ public class CrossReferenceRoot {
 	@Id
 	public String id;
 	
+	public CcListElement singleElement;
+	
 	public final List<CcListElement> ccListElementsList = new ArrayList<>();
 	
 	public final CcListElement[] ccListElementsArray = new CcListElement[3];
