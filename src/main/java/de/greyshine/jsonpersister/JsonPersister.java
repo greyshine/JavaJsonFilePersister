@@ -26,7 +26,6 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 
 import de.greyshine.jsonpersister.annotations.Id;
-import de.greyshine.jsonpersister.objects.CrossReferenceRoot;
 import de.greyshine.jsonpersister.util.Assert;
 import de.greyshine.jsonpersister.util.Utils;
 import de.greyshine.jsonpersister.util.Utils.Wrapper;
